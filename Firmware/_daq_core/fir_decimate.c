@@ -35,6 +35,7 @@
 #include "iq_header.h"
 #include "sh_mem_util.h"
 #include "rtl_daq.h"
+#include "atrace.h"
 
 #ifdef ARM_NEON
 #include "NE10.h"
@@ -117,6 +118,7 @@ int main(int argc, char **argv)
     filter_reset = (bool) config.en_filter_reset;
     log_set_level(config.log_level); 
     log_info("Config succesfully loaded from %s",INI_FNAME);
+    atrace_init(INI_FNAME, "decimate");
     log_info("Channel number: %d", ch_no);
     log_info("Decimation ratio: %d",dec);
     log_info("CPI size: %d", config.cpi_size);
@@ -265,6 +267,7 @@ int main(int argc, char **argv)
                             #endif
                         for(int ch_index=0;ch_index<iq_header->active_ant_chs;ch_index++)                    
                         {
+                            atrace_begin("FIR decimate ch%d", ch_index);
                             #ifndef ARM_NEON
                                 // For downsampling  - X86
                                 int out_sample_index=0; 
@@ -310,6 +313,7 @@ int main(int argc, char **argv)
                             #endif
                             input_data_buffer  += 2*iq_header->cpi_length*dec;
                             output_data_buffer += 2*iq_header->cpi_length;
+                            atrace_end();
                         }                                     
                     }
                                 }
@@ -319,12 +323,14 @@ int main(int argc, char **argv)
                     iq_header->cpi_length = (uint32_t) iq_header->cpi_length;
 
                     /* Convert cint8 to cfloat32 without filtering and decimation on cal type frames*/
+                    atrace_begin("u8 to cf32 (CPI %llu)", (unsigned long long)cpi_index);
                     for(int sample_index=0; sample_index<iq_header->cpi_length*iq_header->active_ant_chs; sample_index++)
                         {
                             output_data_buffer[2*sample_index]   = (float)(input_data_buffer[2*sample_index]-DC)/DC;   // I
                             output_data_buffer[2*sample_index+1] = (float)(input_data_buffer[2*sample_index+1]-DC)/DC; // Q
 
                         }
+                    atrace_end();
 
                 }
                 log_trace("<--Transfering frame type: %d, daq ind:[%d]",iq_header->frame_type, iq_header->daq_block_index);

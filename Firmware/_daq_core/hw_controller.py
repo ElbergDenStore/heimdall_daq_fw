@@ -697,6 +697,8 @@ class CtrIfaceServer(threading.Thread):
         return 0
 
 if __name__ == "__main__":
+    import atrace
+    atrace.init("daq_chain_config.ini", "hw_controller")
     HWC_inst0 = HWC()
     if HWC_inst0.init() == 0:
         HWC_inst0.start()

@@ -38,6 +38,7 @@
 #include <string.h>
 #include <unistd.h>
 #include "rtl_daq.h"
+#include "atrace.h"
 #include "log.h"
 #include "ini.h"
 #include "iq_header.h"
@@ -133,6 +134,7 @@ int main(int argc, char* argv[])
     ch_num = config.num_ch;
     log_set_level(config.log_level);          
     log_info("Config succesfully loaded from %s",INI_FNAME);
+    atrace_init(INI_FNAME, "rebuffer");
     log_info("Channel number: %d", ch_num);
     log_info("Input buffer size: %d IQ samples per channel", in_buffer_size);
     log_info("Output buffer size: %d IQ samples per channel", out_buffer_size);
@@ -186,7 +188,9 @@ int main(int argc, char* argv[])
          *------------------
         */        
         /* Reading IQ header */
+        atrace_begin("wait for rtl_daq");
         read_size = fread(iq_header, sizeof(struct iq_header_struct), 1, stdin);                
+        atrace_end();
         //dump_iq_header(iq_header); // Uncomment to debug IQ header content
         CHK_FR_READ(read_size,1);
         CHK_SYNC_WORD(check_sync_word(iq_header));
@@ -204,6 +208,7 @@ int main(int argc, char* argv[])
         /* Reading multichannel IQ data */
         if (iq_header->cpi_length > 0)
         {
+            atrace_begin("read DAQ block %u", iq_header->daq_block_index);
             for(int m=0;m<iq_header->active_ant_chs;m++)
             {   
                 // Get the circular buffer structure of the mth channel 
@@ -213,6 +218,7 @@ int main(int argc, char* argv[])
                 read_size = fread(cbuff_m->iq_circ_buffer+rd_offset, sizeof(uint8_t), (in_buffer_size*2), stdin);
                 CHK_FR_READ(read_size, in_buffer_size*2);                                                                  
             }
+            atrace_end();
         }
         /*
          *---------------------------------------------------
@@ -310,6 +316,7 @@ int main(int argc, char* argv[])
                     memcpy(frame_ptr, iq_header,1024);
                     
                     /* Place Multichannel IQ data */
+                    atrace_begin("copy CPI to %c (DAQ blocks to %u)", 'A' + active_buff_ind, iq_header->daq_block_index);
                     chunk_size = buffer_num * in_buffer_size * 2 - wr_offset; // Available data until the end of the circular buffer                     
                     if (chunk_size >= active_out_buffer_size*2)
                     {
@@ -337,6 +344,7 @@ int main(int argc, char* argv[])
                         wr_offset = chunk_size_2;
                     }   
                     available -= active_out_buffer_size*2;                
+                    atrace_end();
                     send_ctr_buff_ready(output_sm_buff, active_buff_ind);                                      
                     log_trace("--> Transfering frame: type: %d, daq ind:[%d]",iq_header->frame_type, iq_header->daq_block_index);
 		    break;

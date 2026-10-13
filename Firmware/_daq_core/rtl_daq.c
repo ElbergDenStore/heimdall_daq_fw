@@ -49,6 +49,7 @@
 #include "rtl-sdr.h"
 #include "rtl_daq.h"
 #include "iq_header.h"
+#include "atrace.h"
 
 #ifdef USEPIGPIO
 #include <pigpio.h>
@@ -165,6 +166,7 @@ void * fifo_read_tf(void* arg)
  */    
 {
     (void)arg; 
+    atrace_thread_name("control");
 
     // Initialize ZMQ Socket
     void *context   = zmq_ctx_new ();
@@ -306,7 +308,9 @@ void rtlsdrCallback(unsigned char *buf, uint32_t len, void *ctx)
     struct rtl_rec_struct *rtl_rec = (struct rtl_rec_struct *) ctx;// Set the receiver's structure
   
     int wr_buff_ind = rtl_rec->buff_ind % NUM_BUFF; // Calculate current buffer index in the circular buffer 
+    atrace_begin("USB block %llu", (unsigned long long) rtl_rec->buff_ind);
     memcpy(rtl_rec->buffer + buffer_size * wr_buff_ind, buf, len);    
+    atrace_end();
     
     log_debug("Read at device:%d, buff index:%llu, write index:%d",rtl_rec->dev_ind, rtl_rec->buff_ind, wr_buff_ind);
     rtl_rec->buff_ind++;
@@ -346,6 +350,7 @@ void *read_thread_entry(void *arg)
 {   
     struct rtl_rec_struct *rtl_rec = (struct rtl_rec_struct *) arg;// Set the thread's own receiver structure   
     log_info("Initializing RTL-SDR device, index:%d", rtl_rec->dev_ind);   
+    atrace_thread_name("usb ch%d", rtl_rec->dev_ind);
    
     rtlsdr_dev_t *dev = NULL;
     
@@ -462,6 +467,7 @@ int main( int argc, char** argv )
       i++;      
     }    
     log_info("Config succesfully loaded from %s",INI_FNAME);
+    atrace_init(INI_FNAME, "rtl_daq");
     log_info("Channel number: %d", ch_no);
     log_info("Number of IQ samples per channel: %d", buffer_size/2);    
     log_info("Starting multichannel coherent RTL-SDR receiver");
@@ -604,7 +610,9 @@ int main( int argc, char** argv )
          * All the reader threads should reach the same index before we could send out the data,
          * and we could coninue the acquisition.
         */        
+        atrace_begin("wait for USB");
         pthread_cond_wait(&buff_ind_cond, &buff_ind_mutex); // TODO: Check- should we acquire mutex first?
+        atrace_end();
         data_ready = 1;
         for(int i=0; i<ch_no; i++)
         {
@@ -636,6 +644,7 @@ int main( int argc, char** argv )
             log_debug("Timestamp: %llu", time_stamp_ms);
             iq_header->time_stamp = time_stamp_ms;
             iq_header->daq_block_index = (uint32_t) read_buff_ind;
+            atrace_begin("overdrive check");
             for(int i=0; i<ch_no; i++)
             {
                 rtl_rec = &rtl_receivers[i];                
@@ -650,6 +659,7 @@ int main( int argc, char** argv )
                         overdrive_flags |= 1<<i;
                 }
             }             
+            atrace_end();
             iq_header->adc_overdrive_flags = (uint32_t) overdrive_flags;
             iq_header->noise_source_state = (uint32_t) noise_source_state;
             // Set frame type in the header
@@ -673,6 +683,7 @@ int main( int argc, char** argv )
                 }
             }
             /* Sending IQ header */
+            atrace_begin("write DAQ block %u to rebuffer", iq_header->daq_block_index);
             fwrite(iq_header, sizeof(struct iq_header_struct), 1, stdout);   
             
             /*
@@ -695,6 +706,7 @@ int main( int argc, char** argv )
                 log_warn("Overdrive detected, flags: 0x%02X", overdrive_flags);
 
             fflush(stdout);
+            atrace_end();
             overdrive_flags=0;
             read_buff_ind ++;
             if (en_dummy_frame)

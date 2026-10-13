@@ -45,6 +45,7 @@ from numba import jit, njit
 
 # Import HeIMDALL modules
 from iq_header import IQHeader
+import atrace
 from shmemIface import outShmemIface, inShmemIface
 import inter_module_messages
 
@@ -284,6 +285,10 @@ class delaySynchronizer():
             
         self.logger.info("Interfaces are closed")
     def calc_iq_sync(self, iq_samples):
+        with atrace.slice("calc_iq_sync (amplitude and phase)"):
+            return self._calc_iq_sync(iq_samples)
+
+    def _calc_iq_sync(self, iq_samples):
         """
             This function calculates the synchronization status of the signal processing channels.
             
@@ -450,6 +455,7 @@ class delaySynchronizer():
             if self.iq_header.check_sync_word():
                 self.logger.critical("IQ header sync word check failed, exiting..")
                 break
+            atrace.begin(f"CPI {self.iq_header.cpi_index}: {self.current_state}")
             
             # Prepare payload buffer
             incoming_payload_size = self.iq_header.cpi_length*self.iq_header.active_ant_chs*2*int(self.iq_header.sample_bit_depth/8)
@@ -474,6 +480,7 @@ class delaySynchronizer():
                 # -> IQ Preprocessing <-
                 # TODO: Check payload size
                 if incoming_payload_size > 0:
+                    atrace.begin("correct_iq" if self.en_iq_cal else "copy_iq")
                     if active_buffer_index_iq !=3:
                         iq_frame_buffer_out = (self.out_shmem_iface_iq.buffers[active_buffer_index_iq]).view(dtype=np.complex64)
                         # IQ header offset:1 sample -> 8 byte, 1024 byte length header -> 128 "sample"
@@ -489,6 +496,7 @@ class delaySynchronizer():
                             iq_samples_out = correct_iq(iq_samples_in, iq_samples_out, self.iq_corrections, self.M)
                         else:
                             iq_samples_out = iq_samples_in.copy()
+                    atrace.end()
 
                     # Truncate IQ sample matrix for further processing
                     if self.iq_header.frame_type == IQHeader.FRAME_TYPE_CAL:
@@ -531,6 +539,7 @@ class delaySynchronizer():
                     fs_ppm_offsets=[0]*self.M 
 
                     # ->  Calculate correlation functions            
+                    atrace.begin("sample delays (FFT cross-correlation)")
                     np_zeros = np.zeros(self.N_proc, dtype=np.complex64)
                     x_padd = np.concatenate([iq_samples[self.std_ch_ind, 0:self.N_proc], np_zeros])
                     x_fft = fft.fft(x_padd, workers=4, overwrite_x=True)
@@ -539,6 +548,7 @@ class delaySynchronizer():
                         y_padd = np.concatenate([np_zeros, iq_samples[m, 0:self.N_proc]])
                         y_fft = fft.fft(y_padd, workers=4, overwrite_x=True)
                         self.corr_functions[m,:] = np.abs(fft.ifft(x_fft.conj() * y_fft, workers=4, overwrite_x=True))**2
+                    atrace.end()
                     # ->  Calculate sample delays, check dynamic range
                     # WARNING: This dynamic range checking assumes dirac like coorelation peak                    
                     for m in self.channel_list:
@@ -595,7 +605,8 @@ class delaySynchronizer():
                     sync_state          = 3
                     # TODO: Change sync state -> changes have to take effect in the HWC module as well
                     # Calculate fractional delays
-                    taus = self.estimate_frac_delays(iq_samples[0:self.N_proc])
+                    with atrace.slice("fractional delays"):
+                        taus = self.estimate_frac_delays(iq_samples[0:self.N_proc])
                     self.logger.debug(f"Fractional delays: {taus}")
                     
                     # Determine and set tune values
@@ -780,6 +791,7 @@ class delaySynchronizer():
             
             self.iq_header.sync_state = sync_state
 
+            atrace.end()
             # -> Send IQ frame toward the iq server
             header_uint8 = np.frombuffer(self.iq_header.encode_header(), dtype=np.uint8)
             if active_buffer_index_iq !=3 :
@@ -815,6 +827,7 @@ def copy_iq(iq_samples_in, iq_samples_out, M):
 
 
 if __name__ == '__main__':
+    atrace.init("daq_chain_config.ini", "delay_sync")
     delay_synchronizer_inst0 = delaySynchronizer()
     if delay_synchronizer_inst0.open_interfaces() == 0:
         delay_synchronizer_inst0.start()

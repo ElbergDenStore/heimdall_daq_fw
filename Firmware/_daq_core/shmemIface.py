@@ -24,6 +24,8 @@ from multiprocessing import shared_memory
 import numpy as np
 import os
 
+import atrace
+
 A_BUFF_READY =   1
 B_BUFF_READY =   2
 INIT_READY   =  10
@@ -85,6 +87,8 @@ class outShmemIface():
             os.write(self.fw_ctr_fifo, pack('B',INIT_READY))                        
         
     def send_ctr_buff_ready(self, active_buffer_index):
+        if active_buffer_index in (0, 1):
+            atrace.track_end(f"{self.shmem_name} {'AB'[active_buffer_index]}", active_buffer_index + 1)
         # Send buffer ready signal on the forward FIFO
         if active_buffer_index == 0:            
             os.write(self.fw_ctr_fifo, pack('B',A_BUFF_READY))
@@ -110,13 +114,25 @@ class outShmemIface():
             os.close(self.bw_ctr_fifo)          
         
     def wait_buff_free(self):
+        """A free buffer's index (its track shows this program writing it until send_ctr_buff_ready), or 3 if
+        the frame is dropped (drop mode: the reader holds both)."""
+        i = self._wait_buff_free()
+        if i in (0, 1):
+            atrace.track_begin(f"{self.shmem_name} {'AB'[i]}", i + 1, f"{atrace.name} writes")
+        elif i == 3:
+            with atrace.slice(f"frame dropped ({self.shmem_name})"):
+                pass
+        return i
+
+    def _wait_buff_free(self):
         if self.buffer_free[0]:
             return 0
         elif self.buffer_free[1]:
             return 1
         else:       
             try:
-                buffer = os.read(self.bw_ctr_fifo, 1)
+                with atrace.slice(f"wait for free {self.shmem_name}"):
+                    buffer = os.read(self.bw_ctr_fifo, 1)
                 signal = unpack('B', buffer )[0]
 
                 if signal  == A_BUFF_READY:
@@ -169,6 +185,8 @@ class inShmemIface():
                 self.init_ok = False
 
     def send_ctr_buff_ready(self, active_buffer_index):                
+        if active_buffer_index in (0, 1):
+            atrace.track_end(f"{self.shmem_name} {'AB'[active_buffer_index]}", active_buffer_index + 1)
         if active_buffer_index == 0:            
             os.write(self.bw_ctr_fifo, pack('B',A_BUFF_READY))
         elif active_buffer_index == 1:            
@@ -185,6 +203,15 @@ class inShmemIface():
             os.close(self.bw_ctr_fifo)         
         
     def wait_buff_free(self):
+        """The index of the buffer the writer has filled (its track shows this program reading it until
+        send_ctr_buff_ready), or TERMINATE."""
+        with atrace.slice(f"wait for {self.shmem_name}"):
+            i = self._wait_buff_ready()
+        if i in (0, 1):
+            atrace.track_begin(f"{self.shmem_name} {'AB'[i]}", i + 1, f"{atrace.name} reads")
+        return i
+
+    def _wait_buff_ready(self):
         signal = unpack('B', os.read(self.fw_ctr_fifo, 1))[0]
         if signal == A_BUFF_READY:                    
             return 0

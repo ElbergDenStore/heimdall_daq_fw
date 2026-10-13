@@ -32,8 +32,11 @@
 #include <sys/types.h>
 #include <stdint.h>
 #include <errno.h>
+#include <stdio.h>
+#include <string.h>
 #include "sh_mem_util.h"
 #include "log.h"
+#include "atrace.h"
 
 #define CHK_SUCC(r, e)    if(r != 0)  {return e;}
 #define CHK_ZERO(r, e)    if(r == 0)  {return e;}
@@ -46,6 +49,35 @@ unsigned char char_b_buff_ready[1]={B_BUFF_READY};
 unsigned char char_terminate[1]={TERMINATE}; 
 
 uint8_t signal;
+
+/* Perfetto (atrace.h): buffer i's track is its shared-memory name with the last '_' as a space
+ * ("decimator_in A"); `base` drops the suffix ("decimator_in"). */
+static void track_name(const struct shmem_transfer_struct* sm_buff, int i, char* out, size_t len)
+{
+    snprintf(out, len, "%s", sm_buff->shared_memory_names[i]);
+    char* u = strrchr(out, '_');
+    if (u) *u = ' ';
+}
+static void base_name(const struct shmem_transfer_struct* sm_buff, char* out, size_t len)
+{
+    snprintf(out, len, "%s", sm_buff->shared_memory_names[0]);
+    char* u = strrchr(out, '_');
+    if (u) *u = '\0';
+}
+static void hold(const struct shmem_transfer_struct* sm_buff, int i, const char* what)
+{
+    if (!atrace_enabled() || i < 0 || i > 1) return;
+    char track[512];
+    track_name(sm_buff, i, track, sizeof track);
+    atrace_track_begin(track, i + 1, "%s %s", atrace_name(), what);
+}
+static void release(const struct shmem_transfer_struct* sm_buff, int i)
+{
+    if (!atrace_enabled() || i < 0 || i > 1) return;
+    char track[512];
+    track_name(sm_buff, i, track, sizeof track);
+    atrace_track_end(track, i + 1);
+}
 
 void send_ctr_init_ready(struct shmem_transfer_struct* sm_buff)
 {       
@@ -60,6 +92,7 @@ void send_ctr_terminate(struct shmem_transfer_struct* sm_buff)
 void send_ctr_buff_ready(struct shmem_transfer_struct* sm_buff, int active_buff_index)
 {
     sm_buff->buffer_free[active_buff_index] = false;    
+    release(sm_buff, active_buff_index);
     if      (active_buff_index == 0){fwrite(char_a_buff_ready,1,1,sm_buff->fw_ctr_fifo);}
     else if (active_buff_index == 1){fwrite(char_b_buff_ready,1,1,sm_buff->fw_ctr_fifo);}
     fflush(sm_buff->fw_ctr_fifo); 
@@ -67,6 +100,7 @@ void send_ctr_buff_ready(struct shmem_transfer_struct* sm_buff, int active_buff_
 }
 void send_ctr_buff_free(struct shmem_transfer_struct* sm_buff, int active_buff_index)
 {  
+    release(sm_buff, active_buff_index);
     if      (active_buff_index == 0){fwrite(char_a_buff_ready,1,1,sm_buff->bw_ctr_fifo);}
     else if (active_buff_index == 1){fwrite(char_b_buff_ready,1,1,sm_buff->bw_ctr_fifo);}
     fflush(sm_buff->bw_ctr_fifo); 
@@ -79,7 +113,7 @@ int wait_ctr_init_ready(struct shmem_transfer_struct* sm_buff)
     if(signal == INIT_READY) {return 0;}
     else {return -2;}
 }
-int wait_buff_free(struct shmem_transfer_struct* sm_buff)
+static int wait_buff_free_(struct shmem_transfer_struct* sm_buff)
 {
     if (sm_buff->buffer_free[0] == true)
         return 0;
@@ -87,7 +121,11 @@ int wait_buff_free(struct shmem_transfer_struct* sm_buff)
         return 1;    
     else
     { 
+        char base[512];
+        base_name(sm_buff, base, sizeof base);
+        atrace_begin("wait for free %s", base);
         int read_size=fread(&signal, sizeof(signal), 1, sm_buff->bw_ctr_fifo);
+        atrace_end();
         switch (read_size) 
         { 
             case 0:  // PIPE empty and errono set EAGAIN
@@ -129,7 +167,31 @@ int wait_buff_free(struct shmem_transfer_struct* sm_buff)
     }
     return -2;
 }
+int wait_buff_free(struct shmem_transfer_struct* sm_buff)
+{
+    int i = wait_buff_free_(sm_buff);
+    if (i == 3 && atrace_enabled()) /* drop mode: the reader still holds both buffers */
+    {
+        char base[512];
+        base_name(sm_buff, base, sizeof base);
+        atrace_begin("frame dropped (%s)", base);
+        atrace_end();
+    }
+    hold(sm_buff, i, "writes");
+    return i;
+}
+static int wait_buff_ready_(struct shmem_transfer_struct* sm_buff);
 int wait_buff_ready(struct shmem_transfer_struct* sm_buff)
+{
+    char base[512] = "";
+    if (atrace_enabled()) base_name(sm_buff, base, sizeof base);
+    atrace_begin("wait for %s", base);
+    int i = wait_buff_ready_(sm_buff);
+    atrace_end();
+    hold(sm_buff, i, "reads");
+    return i;
+}
+static int wait_buff_ready_(struct shmem_transfer_struct* sm_buff)
 {
     uint8_t signal;      
     CHK_DATA_PIPE(sm_buff->fw_ctr_fifo, -1);
