@@ -24,6 +24,7 @@
         Mikko Laakso, "Multichannel coherent receiver on the RTL-SDR" 2019
 """
 # Import built-in modules
+import json
 import logging
 from ntpath import join
 import sys
@@ -138,8 +139,24 @@ class delaySynchronizer():
         self.delays = np.zeros(self.M, dtype=int) # Holds the calculated samples delay
         self.iq_corrections = np.ones(self.M, dtype=np.complex64) # This vector holds the IQ compensation values
         self.iq_diff_ref = np.ones(self.M, dtype=np.complex64) # Reference IQ difference vector used in the tracking mode
+        # Every calibration measurement and correction as JSON lines, whatever the log level (ajrx copies _logs/)
+        self.cal_file = open("_logs/delay_sync_cal.jsonl", "w", buffering=1)
         
         self.logger.info("Delay synchronizer initialized")
+
+    def _cal_log(self, event, **values):
+        """One calibration event: the frame it came from, then its values (complex ones as amp_db/phase_deg)."""
+        record = {"event": event, "cpi_index": self.iq_header.cpi_index, "daq_block_index": self.iq_header.daq_block_index,
+                  "time_stamp": self.iq_header.time_stamp, "rf_center_freq": self.iq_header.rf_center_freq}
+        for key, value in values.items():
+            value = np.asarray(value)
+            value = value.astype(np.complex128 if np.iscomplexobj(value) else value.dtype)  # no float32 digits
+            if np.iscomplexobj(value):
+                record[f"{key}_amp_db"] = np.round(20*np.log10(np.abs(value)), 4).tolist()
+                record[f"{key}_phase_deg"] = np.round(np.rad2deg(np.angle(value)), 4).tolist()
+            else:
+                record[key] = value.tolist()
+        self.cal_file.write(json.dumps(record) + "\n")
     
     def _read_config_file(self, config_filename):
         """
@@ -527,6 +544,7 @@ class delaySynchronizer():
                     self.iq_corrections[:] = self.iq_adjust[:]
                     # Calibration frame                    
                     if self.iq_header.frame_type == IQHeader.FRAME_TYPE_CAL: 
+                        self._cal_log("start", iq_corrections=self.iq_corrections)
                         self.current_state = "STATE_SAMPLE_CAL"
                         
                 #
@@ -576,6 +594,8 @@ class delaySynchronizer():
                             sample_sync_flag = False # Misalling detected
                             delay_update_flag=1
                         self.logger.debug("Channel {:d}, delay: {:d}, tune gain: {:d} ppm-offset: {:.7f}, ".format(m, self.delays[m], fs_tune_gain_m, fs_ppm_offsets[m]))
+                    self._cal_log("sample", delays=self.delays, fs_ppm_offsets=fs_ppm_offsets,
+                                  applied=bool(delay_update_flag), synced=sample_sync_flag)
 
                     # Set time delay 
                     if delay_update_flag:
@@ -617,6 +637,7 @@ class delaySynchronizer():
                         if abs(taus[m]) > self.frac_delay_tolerance:
                             fs_ppm_offsets[m+1] = np.sign(taus[m]) * np.abs(taus[m] * self.FRAC_FS_TUNE_GAIN) * self.MIN_FS_PPM_OFFSET
                             frac_delay_update_flag = True
+                    self._cal_log("frac", taus=taus, fs_ppm_offsets=fs_ppm_offsets, applied=frac_delay_update_flag)
                     
                     if frac_delay_update_flag:
                         self.logger.debug(f"Sending ppm offsets: {fs_ppm_offsets}")
@@ -673,11 +694,14 @@ class delaySynchronizer():
                             self.iq_corrections *= iq_diffs
                             self.logger.info("Amplitude differences: {0}".format(20*np.log10(np.abs(iq_diffs))))
                             self.logger.info("Phase differernces: {0}".format(np.rad2deg(np.angle(iq_diffs))))
+                        self._cal_log("iq", iq_diffs=iq_diffs, iq_corrections=self.iq_corrections,
+                                      dyn_ranges=dyn_ranges, applied=iq_corr_update_flag)
                     
                     if not sample_sync_flag:
                         self.current_state = "STATE_SAMPLE_CAL"
                     
                     if sample_sync_flag and iq_sync_flag:                    
+                        self._cal_log("lock", iq_corrections=self.iq_corrections)
                         self.current_state = "STATE_TRACK_LOCK"  
                         if self.cal_track_mode == 2 and self.en_iq_cal:
                             self.iq_diff_ref[:] = iq_diffs[:]
@@ -739,6 +763,7 @@ class delaySynchronizer():
                         else:
                             self.sync_failed_cntr -=1                       
                         if self.sync_failed_cntr == self.max_sync_fails:
+                            self._cal_log("reset", reason="sync lost")
                             self.current_state = "STATE_INIT"
                             self.sync_failed_cntr = 0
                         elif self.sync_failed_cntr < 0: # Sync tracking holds
@@ -752,6 +777,7 @@ class delaySynchronizer():
                     # Has the RF center frequency changed?
                     if self.last_rf != self.iq_header.rf_center_freq:
                         self.logger.info("Center frequency changed, initiating recalibration")
+                        self._cal_log("reset", reason="center frequency changed")
                         sample_sync_flag = False
                         iq_sync_flag = False
                         self.sync_failed_cntr = 0

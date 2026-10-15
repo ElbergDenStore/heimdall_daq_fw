@@ -1,4 +1,5 @@
 Firmware/_logs/*.log
+Firmware/_logs/*.jsonl
 Firmware/_logs/*.html
 Firmware/_data_control/*
 !Firmware/_data_control/iq_track_lock
