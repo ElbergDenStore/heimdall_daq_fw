@@ -1,7 +1,7 @@
 """Perfetto slices on ftrace's trace_marker for heimdall's Python modules: the twin of atrace.c.
 
-ajrx fork, branch aj (kraken-antijam PLAN.md D37). Off unless daq_chain_config.ini has
-[trace] marker = <path>; see atrace.h for the records.
+crparx fork, branch CRPA-Research (Kraken-CRPA PLAN.md D37). Off unless daq_chain_config.ini
+has [trace] marker = <path>; see atrace.h for the records.
 """
 import ctypes
 import os

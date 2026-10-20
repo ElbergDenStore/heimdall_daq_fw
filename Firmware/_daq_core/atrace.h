@@ -1,7 +1,7 @@
 /*
- * Perfetto slices on ftrace's trace_marker (ajrx fork, branch aj; kraken-antijam PLAN.md D37).
+ * Perfetto slices on ftrace's trace_marker (crparx fork, branch CRPA-Research; Kraken-CRPA PLAN.md D37).
  *
- * Off unless daq_chain_config.ini has [trace] marker = <path> (ajrx writes it when run.trace is on)
+ * Off unless daq_chain_config.ini has [trace] marker = <path> (crparx writes it when run.trace is on)
  * and that file opens; then every call is one write() of atrace's text format:
  *   B|0|name            begin a slice on the calling thread (tgid 0: Perfetto takes it from the kernel)
  *   E|0                 end it

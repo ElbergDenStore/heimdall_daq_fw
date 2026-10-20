@@ -139,7 +139,7 @@ class delaySynchronizer():
         self.delays = np.zeros(self.M, dtype=int) # Holds the calculated samples delay
         self.iq_corrections = np.ones(self.M, dtype=np.complex64) # This vector holds the IQ compensation values
         self.iq_diff_ref = np.ones(self.M, dtype=np.complex64) # Reference IQ difference vector used in the tracking mode
-        # Every calibration measurement and correction as JSON lines, whatever the log level (ajrx copies _logs/)
+        # Every calibration measurement and correction as JSON lines, whatever the log level (crparx copies _logs/)
         self.cal_file = open("_logs/delay_sync_cal.jsonl", "w", buffering=1)
         
         self.logger.info("Delay synchronizer initialized")
