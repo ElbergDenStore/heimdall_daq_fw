@@ -644,21 +644,28 @@ int main( int argc, char** argv )
             log_debug("Timestamp: %llu", time_stamp_ms);
             iq_header->time_stamp = time_stamp_ms;
             iq_header->daq_block_index = (uint32_t) read_buff_ind;
+            rd_buff_ind = read_buff_ind % NUM_BUFF; // this block's buffer: upstream checked the one sent before
             atrace_begin("overdrive check");
             for(int i=0; i<ch_no; i++)
             {
-                rtl_rec = &rtl_receivers[i];                
+                rtl_rec = &rtl_receivers[i];
                 // Set center frequncy value
-                iq_header->rf_center_freq = (uint64_t) rtl_rec->center_freq;                
-                // Set gain value                
-                iq_header->if_gains[i] = (uint32_t) rtl_rec->gain;                
-                // Check overdrive
+                iq_header->rf_center_freq = (uint64_t) rtl_rec->center_freq;
+                // Set gain value
+                iq_header->if_gains[i] = (uint32_t) rtl_rec->gain;
+                // Check overdrive (the top rail), and count the values at either rail for crparx
+                const uint8_t *block = rtl_rec->buffer + buffer_size * rd_buff_ind;
+                uint32_t top = 0, bottom = 0;
                 for(int n=0; n<buffer_size; n++)
                 {
-                    if( *(rtl_rec->buffer+buffer_size*rd_buff_ind + n) == 255)
-                        overdrive_flags |= 1<<i;
+                    top += block[n] == 255;
+                    bottom += block[n] == 0;
                 }
-            }             
+                if(top)
+                    overdrive_flags |= 1<<i;
+                iq_header->reserved[RAIL_COUNT + i] = top + bottom;
+            }
+            iq_header->reserved[RAIL_TOTAL] = (uint32_t) buffer_size;
             atrace_end();
             iq_header->adc_overdrive_flags = (uint32_t) overdrive_flags;
             iq_header->noise_source_state = (uint32_t) noise_source_state;

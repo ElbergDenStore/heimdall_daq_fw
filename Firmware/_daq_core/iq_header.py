@@ -77,6 +77,7 @@ class IQHeader():
         self.iq_sync_flag         = iq_header_list[50]
         self.sync_state           = iq_header_list[51]  
         self.noise_source_state   = iq_header_list[52]
+        self.reserved             = list(iq_header_list[53:53+self.reserved_bytes]) # crparx's rail counts (iq_header.h)
         self.header_version       = iq_header_list[52+self.reserved_bytes+1]
 
     def encode_header(self):
@@ -98,7 +99,7 @@ class IQHeader():
         iq_header_byte_array+=pack("I", self.noise_source_state)
 
         for m in range(self.reserved_bytes):
-            iq_header_byte_array+=pack("I",0)
+            iq_header_byte_array+=pack("I", self.reserved[m])
 
         iq_header_byte_array+=pack("I", self.header_version)
         return iq_header_byte_array

@@ -118,6 +118,7 @@ int main(int argc, char* argv[])
     bool drop_mode = true;
 
     uint32_t adc_overdrive_flags=0; // Used to accumulate the overdrive flags in a CPI
+    uint32_t rail[RAIL_TOTAL + 1] = {0}; // and the rail counts (crparx)
     
     /* Set drop mode from the command prompt*/    
     if (argc == 2){drop_mode = atoi(argv[1]);}
@@ -236,8 +237,10 @@ int main(int argc, char* argv[])
                     memset(circ_buff_structs[m].iq_circ_buffer, 0, buffer_num * in_buffer_size*2*sizeof(*cbuff_m->iq_circ_buffer));
                 }
                 wr_offset = 0;
-                rd_offset = 0;  
-                available = 0;                
+                rd_offset = 0;
+                available = 0;
+                adc_overdrive_flags = 0; // they belong to the data just dropped
+                memset(rail, 0, sizeof(rail));
             }
             break;
             case FRAME_TYPE_DATA:
@@ -252,6 +255,8 @@ int main(int argc, char* argv[])
 
                 // Accumulate ADC overdrive flags
                 adc_overdrive_flags |= iq_header->adc_overdrive_flags;
+                for(int i=0; i<=RAIL_TOTAL; i++)
+                    rail[i] += iq_header->reserved[i];
             }
             break;
             default:
@@ -313,6 +318,8 @@ int main(int argc, char* argv[])
                     log_debug("Timestamp adjust: %f ms", timestamp_adjust);
                     iq_header->time_stamp -= (int) round(timestamp_adjust);                    
                     adc_overdrive_flags = 0;
+                    memcpy(iq_header->reserved, rail, sizeof(rail));
+                    memset(rail, 0, sizeof(rail));
                     memcpy(frame_ptr, iq_header,1024);
                     
                     /* Place Multichannel IQ data */

@@ -18,6 +18,12 @@
 #define SYNC_WORD 0x2bf7b95a
 
 #define IQ_HEADER_LENGTH 1024
+
+/* crparx (CRPA-Research): reserved[RAIL_COUNT + ch] = the channel's u8 values at either rail (0 or 255), I and Q
+ * counted alike, and reserved[RAIL_TOTAL] = the u8 values per channel they are counted in. RTL-DAQ fills them per
+ * block, Rebuffer sums them over a CPI. A RAIL_TOTAL of 0 means not counted. */
+#define RAIL_COUNT 0
+#define RAIL_TOTAL 32
 struct iq_frame_struct 
 {
 	struct iq_header_struct* header;
